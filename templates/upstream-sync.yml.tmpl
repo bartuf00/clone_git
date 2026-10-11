@@ -18,6 +18,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
 env:
   UPSTREAM_URL: '__UPSTREAM_URL__'
   UPSTREAM_BRANCH: '__UPSTREAM_BRANCH__'
@@ -31,6 +35,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ env.TARGET_BRANCH }}
+          token: ${{ secrets.UPSTREAM_TOKEN || github.token }}
 
       - name: Synchronize with upstream
         env:
@@ -39,24 +45,4 @@ jobs:
           set -euo pipefail
           git config user.name "refork-sync[bot]"
           git config user.email "refork-sync[bot]@users.noreply.github.com"
-          git remote add upstream "$UPSTREAM_URL"
-          git fetch upstream "$UPSTREAM_BRANCH"
-          git checkout "$TARGET_BRANCH"
-          case "$SYNC_STRATEGY" in
-            ff-only)
-              git merge --ff-only "upstream/$UPSTREAM_BRANCH"
-              ;;
-            merge)
-              git merge --no-edit "upstream/$UPSTREAM_BRANCH"
-              ;;
-            rebase)
-              git rebase "upstream/$UPSTREAM_BRANCH"
-              ;;
-            *)
-              printf 'Unsupported sync strategy: %s\n' "$SYNC_STRATEGY" >&2
-              exit 1
-              ;;
-          esac
-
-      - name: Push synchronized branch
-        run: git push origin "HEAD:$TARGET_BRANCH"
+          sh .github/refork/sync-upstream.sh "$UPSTREAM_URL" "$UPSTREAM_BRANCH" "$TARGET_BRANCH" "$SYNC_STRATEGY"
