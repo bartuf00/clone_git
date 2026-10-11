@@ -97,3 +97,57 @@ run_sync() {
   [ ! -d "$TARGET/.git/rebase-merge" ]
   [ ! -d "$TARGET/.git/rebase-apply" ]
 }
+
+@test "synchronizes the requested branch without modifying another checkout" {
+  add_upstream_commit upstream
+  git -C "$TARGET" checkout -b feature
+  printf 'feature\n' >"$TARGET/feature.txt"
+  git -C "$TARGET" add feature.txt
+  git -C "$TARGET" commit -m feature
+  feature_sha=$(git -C "$TARGET" rev-parse HEAD)
+
+  run run_sync "$UPSTREAM" main main ff-only
+
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$TARGET" rev-parse feature)" = "$feature_sha" ]
+  [ "$(git -C "$TARGET" rev-parse main)" = "$(git --git-dir="$UPSTREAM" rev-parse main)" ]
+}
+
+@test "creates a local checkout for an existing remote target branch" {
+  git -C "$TARGET" push origin main:release
+  add_upstream_commit upstream
+
+  run run_sync "$UPSTREAM" main release ff-only
+
+  [ "$status" -eq 0 ]
+  [ "$(git -C "$TARGET" rev-parse release)" = "$(git --git-dir="$UPSTREAM" rev-parse main)" ]
+}
+
+@test "rebase publishes rewritten target history with a lease" {
+  printf 'local\n' >"$TARGET/local.txt"
+  git -C "$TARGET" add local.txt
+  git -C "$TARGET" commit -m local
+  git -C "$TARGET" push origin main
+  old_sha=$(git -C "$TARGET" rev-parse HEAD)
+  add_upstream_commit upstream
+
+  run bash -c 'cd "$1" && "$2" "$3" main main rebase' _ "$TARGET" "$SCRIPT" "$UPSTREAM"
+
+  [ "$status" -eq 0 ]
+  new_sha=$(git --git-dir="$ORIGIN" rev-parse main)
+  [ "$new_sha" != "$old_sha" ]
+  [ "$(git -C "$TARGET" rev-parse HEAD)" = "$new_sha" ]
+  git -C "$TARGET" merge-base --is-ancestor "$(git --git-dir="$UPSTREAM" rev-parse main)" HEAD
+}
+
+@test "dirty worktrees are rejected without changing local files" {
+  add_upstream_commit upstream
+  printf 'dirty\n' >"$TARGET/untracked.txt"
+  old_sha=$(git -C "$TARGET" rev-parse HEAD)
+
+  run run_sync "$UPSTREAM" main main ff-only
+
+  [ "$status" -ne 0 ]
+  [ "$(git -C "$TARGET" rev-parse HEAD)" = "$old_sha" ]
+  [ "$(cat "$TARGET/untracked.txt")" = dirty ]
+}
