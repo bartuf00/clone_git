@@ -23,13 +23,13 @@ printf '%s | repo=%s\n' "$*" "${GH_REPO:-}" >>"$TEST_ROOT/gh.log"
 case "$1 $2" in
   'repo create') git init -q --bare -b main "$TEST_ROOT/target.git" ;;
   'repo edit') : ;;
-  'release view') exit 1 ;;
+  'release view') printf 'HTTP 404: release not found\n' >&2; exit 1 ;;
   'release create') [ "$GH_REPO" = target/mirror ] ;;
   *) printf 'Unexpected gh command: %s\n' "$*" >&2; exit 2 ;;
 esac
 EOF
   chmod +x "$TEST_ROOT/bin/gh"
-  export PATH="$TEST_ROOT/bin:$PATH"
+  export PATH="$TEST_ROOT/bin:/tmp/opencode/usr/bin:$PATH"
 }
 
 teardown() {
@@ -67,6 +67,8 @@ for step in action["runs"]["steps"]:
   [ "$status" -eq 0 ]
   git --git-dir="$TEST_ROOT/target.git" show release:.github/workflows/upstream-sync.yml
   git --git-dir="$TEST_ROOT/target.git" show release:.github/refork/sync-upstream.sh
+  git --git-dir="$TEST_ROOT/target.git" show release:.github/refork/lfs_archive.py
+  git --git-dir="$TEST_ROOT/target.git" show release:.github/workflows/upstream-sync.yml | grep -q 'lfs_archive.py archive'
   [ "$(git --git-dir="$TEST_ROOT/target.git" rev-parse original)" = "$(git -C "$TEST_ROOT/upstream" rev-parse original)" ]
   [ "$(git --git-dir="$TEST_ROOT/target.git" rev-parse feature)" = "$(git -C "$TEST_ROOT/upstream" rev-parse feature)" ]
   [ ! -e "$TEST_ROOT/caller/.github" ]

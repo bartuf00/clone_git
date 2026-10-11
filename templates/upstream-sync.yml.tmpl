@@ -37,6 +37,21 @@ jobs:
           fetch-depth: 0
           ref: ${{ env.TARGET_BRANCH }}
           token: ${{ secrets.UPSTREAM_TOKEN || github.token }}
+          lfs: false
+
+      - name: Archive upstream LFS objects to target releases
+        env:
+          GH_TOKEN: ${{ secrets.UPSTREAM_TOKEN || github.token }}
+        run: |
+          set -euo pipefail
+          export GIT_LFS_SKIP_SMUDGE=1 GIT_LFS_SKIP_PUSH=1 GIT_TERMINAL_PROMPT=0
+          export GIT_CONFIG_COUNT=2
+          export GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0=''
+          export GIT_CONFIG_KEY_1=credential.https://github.com.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'
+          mirror_dir=$(mktemp -d)
+          git clone --bare "$UPSTREAM_URL" "$mirror_dir/source.git"
+          python3 .github/refork/lfs_archive.py archive "$UPSTREAM_URL" '${{ github.repository }}' "$mirror_dir/source.git"
+          rm -rf "$mirror_dir"
 
       - name: Synchronize with upstream
         env:

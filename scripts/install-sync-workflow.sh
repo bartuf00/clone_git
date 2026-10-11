@@ -84,6 +84,7 @@ main() {
         cp "$rendered" "$target_dir/.github/workflows/upstream-sync.yml"
         mkdir -p "$target_dir/.github/refork"
         cp "$template_dir/../scripts/sync-upstream.sh" "$target_dir/.github/refork/sync-upstream.sh"
+        cp "$template_dir/../scripts/lfs_archive.py" "$target_dir/.github/refork/lfs_archive.py"
     fi
 }
 

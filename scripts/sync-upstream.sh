@@ -4,6 +4,7 @@ set -eu
 usage() { printf 'Usage: %s [UPSTREAM_URL [UPSTREAM_BRANCH [TARGET_BRANCH [STRATEGY]]]]\nDRY_RUN=1 applies changes locally but skips the push.\n' "${0##*/}" >&2; }
 
 main() {
+    export GIT_LFS_SKIP_SMUDGE=1 GIT_LFS_SKIP_PUSH=1
     if [ "${1:-}" = "--help" ]; then usage; return; fi
     [ "$#" -le 4 ] || { usage; exit 2; }
     upstream_url=${1:-${UPSTREAM_URL:-}}

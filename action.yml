@@ -85,6 +85,8 @@ runs:
         SYNC_STRATEGY: ${{ inputs.sync_strategy }}
         GH_TOKEN: ${{ inputs.token }}
         GIT_TERMINAL_PROMPT: '0'
+        GIT_LFS_SKIP_SMUDGE: '1'
+        GIT_LFS_SKIP_PUSH: '1'
         GIT_CONFIG_COUNT: '2'
         GIT_CONFIG_KEY_0: credential.https://github.com.helper
         GIT_CONFIG_VALUE_0: ''
@@ -95,7 +97,7 @@ runs:
         trap 'rm -rf "$target_dir"' EXIT
         git clone --branch "$TARGET_BRANCH" --single-branch "https://github.com/$TARGET_REPO.git" "$target_dir"
         sh "$ACTION_PATH/scripts/install-sync-workflow.sh" "$target_dir" "$UPSTREAM_URL" "$SYNC_CRON" "$SYNC_STRATEGY" "$UPSTREAM_BRANCH" "$TARGET_BRANCH"
-        git -C "$target_dir" add .github/workflows/upstream-sync.yml .github/refork/sync-upstream.sh
+        git -C "$target_dir" add .github/workflows/upstream-sync.yml .github/refork/sync-upstream.sh .github/refork/lfs_archive.py
         git -C "$target_dir" -c user.name='refork-sync[bot]' -c user.email='refork-sync[bot]@users.noreply.github.com' commit -m 'chore: install upstream synchronization'
         git -C "$target_dir" push origin "HEAD:refs/heads/$TARGET_BRANCH"
         echo 'sync_workflow_path=.github/workflows/upstream-sync.yml' >> "$GITHUB_OUTPUT"

@@ -43,6 +43,7 @@ main() {
     visibility=${VISIBILITY:-private}
     case "$visibility" in public|private) : ;; *) printf 'VISIBILITY must be public or private\n' >&2; exit 2 ;; esac
     export GH_TOKEN="$PAT_TOKEN" GIT_TERMINAL_PROMPT=0
+    export GIT_LFS_SKIP_SMUDGE=1 GIT_LFS_SKIP_PUSH=1
     export GIT_CONFIG_COUNT=2
     export GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0=''
     export GIT_CONFIG_KEY_1=credential.https://github.com.helper GIT_CONFIG_VALUE_1='!gh auth git-credential'
@@ -70,9 +71,11 @@ main() {
     fi
     if [ "$DRY_RUN" -eq 1 ]; then
         printf '+ git -C %s push --mirror %s\n' "$tmp_dir/mirror.git" "$target_url"
+        printf '+ python3 scripts/lfs_archive.py archive %s %s %s\n' "$source_url" "$target_repo" "$tmp_dir/mirror.git"
     else
         git -C "$tmp_dir/mirror.git" push --mirror "$target_url"
         gh repo edit "$target_repo" --default-branch "$target_branch"
+        python3 "$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)/lfs_archive.py" archive "$source_url" "$target_repo" "$tmp_dir/mirror.git"
     fi
 }
 
