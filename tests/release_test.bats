@@ -11,17 +11,52 @@ setup() {
 set -eu
 printf '%s\n' "$*" >>"$GH_LOG"
 case "$1 $2" in
-  "release view") exit 0 ;;
+  "release view") [ "${GH_RELEASE:-existing}" != missing ] ;;
   "release download")
     [ "${GH_MODE:-identical}" != missing ] || exit 1
-    dir=$7
-    cp "$GH_REMOTE" "$dir/asset.txt"
+    shift 3
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --pattern) pattern=$2; shift 2 ;;
+        --dir) dir=$2; shift 2 ;;
+        *) exit 2 ;;
+      esac
+    done
+    asset_name=${GH_ASSET_NAME:-asset.txt}
+    case "$asset_name" in $pattern) cp "$GH_REMOTE" "$dir/$asset_name" ;; *) exit 1 ;; esac
     ;;
   "release upload") printf 'uploaded\n' ;;
 esac
 EOF
   chmod +x "$BIN/gh"
   export PATH="$BIN:$PATH" GH_LOG="$TEST_ROOT/gh.log" GH_REMOTE="$TEST_ROOT/remote.txt"
+}
+
+@test "a release tag can be published without an asset" {
+  run env GH_RELEASE=missing TARGET_BRANCH=release "$SCRIPT" v1 ''
+
+  [ "$status" -eq 0 ]
+  grep -q 'release create v1.*--target release' "$GH_LOG"
+  ! grep -q 'release upload' "$GH_LOG"
+}
+
+@test "release creation is noninteractive and respects the selected branch" {
+  run env GH_RELEASE=missing GH_MODE=missing TARGET_BRANCH=release "$SCRIPT" v1 "$TEST_ROOT/asset.txt"
+
+  [ "$status" -eq 0 ]
+  grep -q 'release create v1.*--target release.*--notes' "$GH_LOG"
+}
+
+@test "literal bracket characters in asset names do not force a reupload" {
+  asset_name='asset[1].txt'
+  cp "$TEST_ROOT/asset.txt" "$TEST_ROOT/$asset_name"
+  cp "$TEST_ROOT/asset.txt" "$GH_REMOTE"
+
+  run env GH_ASSET_NAME="$asset_name" "$SCRIPT" v1 "$TEST_ROOT/$asset_name"
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"SKIP $asset_name (identical)"* ]]
+  ! grep -q 'release upload' "$GH_LOG"
 }
 
 teardown() {
