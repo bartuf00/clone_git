@@ -5,6 +5,12 @@ then commits a scheduled sync workflow and its runtime to the target. It does
 not use GitHub's fork API. Branches, tags, and Git history are mirrored; issues,
 pull requests, release assets, settings, and secrets are **not** copied.
 
+Upstream **Git LFS payloads** are additionally archived into the target as
+dedicated content-addressed releases (`lfs-archive/<sha256>`), one release per
+object, both at provisioning time and on every scheduled sync. This uses GitHub
+Release asset storage — **never** the target repository's native LFS storage,
+so it consumes no target LFS quota.
+
 ## Setup
 
 1. Use a Linux runner with Git and GitHub CLI (`ubuntu-latest` provides both).
@@ -79,11 +85,59 @@ Outputs:
 
 ## Synchronization behavior
 
-Provisioning adds `.github/workflows/upstream-sync.yml` and
-`.github/refork/sync-upstream.sh` in a new commit **on the target only**. The caller
-workspace is not changed. `target_branch` is made the default because scheduled
-workflows run only from the default branch. The generated workflow can also be
-dispatched manually and serializes sync runs to reduce push races.
+Provisioning adds `.github/workflows/upstream-sync.yml`,
+`.github/refork/sync-upstream.sh`, and `.github/refork/lfs_archive.py` in a new
+commit **on the target only**. The caller workspace is not changed.
+`target_branch` is made the default because scheduled workflows run only from
+the default branch. The generated workflow can also be dispatched manually and
+serializes sync runs to reduce push races.
+
+## LFS release archives
+
+Every provision and every scheduled sync runs the archive helper against the
+upstream's full history (all branches and tags):
+
+1. Historical LFS objects are enumerated with `git lfs ls-files --all --json`,
+   so objects deleted from the current tree are included.
+2. Each object is downloaded from the upstream LFS store only, verified against
+   its SHA-256 pointer, split into chunks under GitHub's 2 GiB per-asset limit,
+   and uploaded to a **draft** release `lfs-archive/<sha256>`.
+3. The release is published only after the manifest and all chunks verify.
+   Published archives are append-only: reruns verify and skip them, never
+   clobber or delete. A failed run leaves a resumable draft, not a broken
+   archive.
+4. Nothing is ever pushed to the target's LFS storage (`GIT_LFS_SKIP_PUSH=1`
+   is enforced for every Git operation).
+
+If the upstream repository or its LFS store later disappears, the payloads stay
+downloadable from your target's releases.
+
+### Restoring LFS files
+
+The helper is installed in the target at `.github/refork/lfs_archive.py`. In a
+clean checkout of the target (including a detached historical commit), run:
+
+```sh
+python3 .github/refork/lfs_archive.py restore owner/target
+```
+
+It requires no upstream access: it downloads the needed objects from the
+target's releases, verifies every chunk and the assembled object hash, places
+them in the local Git LFS cache, and runs `git lfs checkout`. It refuses to run
+in a dirty worktree and never contacts any LFS server.
+
+When checking out an old commit in a repository whose LFS server is gone,
+disable automatic smudging first, then restore:
+
+```sh
+GIT_LFS_SKIP_SMUDGE=1 git checkout <commit-or-tag>
+python3 .github/refork/lfs_archive.py restore owner/target
+```
+
+Limitations: release assets are independent of Git LFS pointers — a plain
+`git clone` still shows pointer files until you run `restore`. GitHub limits
+each release to 1,000 assets and 2 GiB per file; objects larger than
+~999 GiB are rejected. Submodules are not archived.
 
 - **`merge` (default):** preserves local setup/customizations while incorporating
   upstream changes. Conflicts fail and abort without pushing.
@@ -120,11 +174,13 @@ never deletes a repository or overwrites an existing one automatically.
 ## Local checks
 
 Install Bats, ShellCheck, and actionlint; install Python 3 with PyYAML for the
-composite integration test. No live GitHub repository is created by the tests:
-they use local Git repositories and a CLI stub at the GitHub boundary.
+composite integration test and pytest plus Git LFS for the archive tests. No
+live GitHub repository is created by the tests: they use local Git/LFS
+repositories and CLI stubs at the GitHub boundary.
 
 ```sh
 bats tests
+python3 -m pytest tests -q
 shellcheck scripts/*.sh
 for script in scripts/*.sh; do sh -n "$script"; done
 actionlint examples/refork-example.yml
