@@ -3,9 +3,7 @@ name: Create standalone refork
 on:
   workflow_dispatch:
 
-permissions:
-  contents: write
-  workflows: write
+permissions: {}
 
 jobs:
   refork:
@@ -13,13 +11,13 @@ jobs:
     steps:
       - name: Create and configure standalone repository
         id: refork
-        uses: bartuf00/clone_git@v1
+        uses: bartuf00/clone_git@main
         with:
           source_repo_url: https://github.com/example/upstream.git
           target_repo: example/standalone-project
           visibility: private
           sync_cron: '0 4 * * *'
-          sync_strategy: ff-only
+          sync_strategy: merge
           upstream_branch: main
           target_branch: main
           release_tag: ''

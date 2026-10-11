@@ -1,63 +1,136 @@
-# Refork action
+# Standalone mirror action
 
-This composite action creates a standalone repository by mirroring an upstream
-repository, installs a scheduled synchronization workflow, and optionally
-uploads a release asset. It uses a mirror rather than GitHub's fork API because
-there is no supported API to detach a fork into a standalone repository.
+Creates a **new**, independent GitHub repository from an upstream repository,
+then commits a scheduled sync workflow and its runtime to the target. It does
+not use GitHub's fork API. Branches, tags, and Git history are mirrored; issues,
+pull requests, release assets, settings, and secrets are **not** copied.
 
-## Requirements
+## Setup
 
-Provide a personal access token (`token`) in `PAT_TOKEN`. The token needs
-`repo` (or `public_repo` for public-only repositories) and `workflows: write`
-permission so the action can create the repository and install its workflow.
-`GITHUB_TOKEN` cannot create repositories and is not a replacement for this
-token.
+1. Use a Linux runner with Git and GitHub CLI (`ubuntu-latest` provides both).
+2. Store a **classic PAT** as `PAT_TOKEN` in the calling repository. Give it
+   `repo` and `workflow` scopes, or `public_repo` and `workflow` for public-only
+   operations. It must read the source and create/write repositories under the
+   target owner. Organization policies/SSO may require extra authorization.
+   `GITHUB_TOKEN` cannot create repositories. A workflow `permissions:` map
+   controls that token only; `workflows: write` is not a valid map entry.
+3. Choose a target name that does not exist. Creation fails rather than
+   overwriting an existing repository. Do not use this as a rerunnable updater.
+4. This action repository is private. For direct use in another private repo
+   owned by `bartuf00`, enable **Settings > Actions > General > Access** in
+   `clone_git`. Private sharing does not grant access to public or unrelated
+   accounts' repositories. Do not change visibility just to fix an access error.
+5. For a **private upstream**, add an `UPSTREAM_TOKEN` secret to the created
+   target, with read access to upstream and write access to target. Use the
+   classic `repo` and `workflow` scopes when upstream updates contain workflows.
+   The provisioning token is deliberately not saved or copied to the target.
+   Public-upstream sync uses the target's `GITHUB_TOKEN` unless this secret is set.
 
-## Inputs
-
-| Input | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `source_repo_url` | yes | — | Upstream URL or `owner/repo`. |
-| `target_repo` | yes | — | New repository as `owner/name`. |
-| `visibility` | no | `private` | `private` or `public`. |
-| `sync_cron` | no | `0 4 * * *` | Five-field synchronization cron. |
-| `sync_strategy` | no | `ff-only` | `ff-only`, `merge`, or `rebase`. |
-| `upstream_branch` | no | `main` | Upstream branch to fetch. |
-| `target_branch` | no | `main` | Target branch to update. |
-| `release_tag` | no | empty | If non-empty, create/use this release tag. |
-| `release_asset_path` | no | empty | File to upload to that release. |
-| `token` | yes | — | PAT used for repository and workflow operations. |
+See [private action sharing](https://docs.github.com/en/actions/how-tos/reuse-automations/share-across-private-repositories)
+and [scheduled workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
 
 ## Usage
 
+Copy `examples/refork-example.yml` into the calling repository's
+`.github/workflows/`, replace the source/target placeholders, and run it manually.
+No checkout of the caller is needed unless you build or upload a release asset.
+
 ```yaml
-steps:
-  - uses: ./refork-action
-    with:
-      source_repo_url: https://github.com/example/upstream.git
-      target_repo: example/standalone-project
-      token: ${{ secrets.PAT_TOKEN }}
-      upstream_branch: main
-      target_branch: main
+name: Create standalone mirror
+on:
+  workflow_dispatch:
+permissions: {}
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: bartuf00/clone_git@main
+        with:
+          source_repo_url: example/upstream
+          target_repo: bartuf00/standalone-project
+          token: ${{ secrets.PAT_TOKEN }}
+          sync_strategy: merge
 ```
 
-The synchronization workflow is generated at
-`.github/workflows/upstream-sync.yml` in the target checkout and uses the
-repository's `sync-upstream.sh` runtime semantics for branch and strategy
-selection. A release is only
-processed when `release_tag` is non-empty; `release-asset.sh` creates the
-release if needed and uploads the requested asset, skipping an identical asset.
+`main` is the currently available ref, not an immutable release. There is no
+published `v1` tag yet. Pin a reviewed full commit SHA for reproducibility.
+For local use, check out this repo first and use `uses: ./` at its root, not
+the removed `./refork-action` path.
+
+## Inputs and outputs
+
+| Input | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `source_repo_url` | yes | empty | GitHub HTTPS URL, `owner/repo`, or GitHub SSH URL. All are normalized to HTTPS and authenticated with the PAT, not SSH keys. |
+| `target_repo` | yes | empty | **New** repository as `owner/name`. |
+| `visibility` | no | `private` | `private` or `public`. Public exposes all mirrored history. |
+| `sync_cron` | no | `0 4 * * *` | Five-field UTC cron. GitHub supports intervals of at least five minutes; runs may be delayed. |
+| `sync_strategy` | no | `merge` | `merge`, `ff-only`, or `rebase`; see below. |
+| `upstream_branch` | no | `main` | Existing upstream branch. Set this explicitly for repos using `master` or another name. |
+| `target_branch` | no | `main` | Target branch and new default branch. If absent upstream, it is created from `upstream_branch`. |
+| `release_tag` | no | empty | Create/use a release **in the target**, optionally without an asset. |
+| `release_asset_path` | no | empty | File relative to the caller workspace or an absolute path. Names containing `#`, `*`, `?`, or backslashes are rejected because of CLI label/glob semantics. |
+| `token` | yes | empty | Classic PAT used for creation, Git authentication, workflow installation, and releases. |
+
+Outputs:
+- `target_repo_url`: `https://github.com/owner/name`.
+- `sync_workflow_path`: repository-relative `.github/workflows/upstream-sync.yml`,
+  not a surviving runner checkout path.
+
+## Synchronization behavior
+
+Provisioning adds `.github/workflows/upstream-sync.yml` and
+`.github/refork/sync-upstream.sh` in a new commit **on the target only**. The caller
+workspace is not changed. `target_branch` is made the default because scheduled
+workflows run only from the default branch. The generated workflow can also be
+dispatched manually and serializes sync runs to reduce push races.
+
+- **`merge` (default):** preserves local setup/customizations while incorporating
+  upstream changes. Conflicts fail and abort without pushing.
+- **`ff-only`:** refuses divergence without changing history. Installing the sync
+  files itself introduces divergence, so this strategy normally fails after the
+  first upstream update. It is an explicit strict-history option, not the default.
+- **`rebase`:** replays local commits on upstream and rewrites target history.
+  Push uses an explicit `--force-with-lease` against the fetched target SHA so a
+  concurrent update is not overwritten. Protected branches may reject this.
+
+The runtime checks out the requested target branch and requires a clean worktree.
+`DRY_RUN=1` for `sync-upstream.sh` means **no push**, not no local changes.
+Scheduled workflows in public repos can be disabled after 60 days of inactivity.
+If upstream modifies workflow files, the default `GITHUB_TOKEN` may be unable to
+push them; configure `UPSTREAM_TOKEN` with the appropriate workflow scope.
+
+## Releases, trust, and partial failures
+
+New releases use `target_branch` if the tag does not already exist. Existing tags
+keep their original commits. Asset uploads skip identical content and replace
+different content of the same name. Checkout/build the asset before this action;
+the mirrored repository is not a build workspace for the caller.
+
+Only mirror repositories you trust: source workflows are copied too and may run
+in the target. Workflow/runtime paths above are reserved and overwritten by the
+installer. Later upstream changes to those files can conflict. Review source
+workflows before granting the target secrets or enabling Actions.
+
+Provisioning is not transactional: a push, workflow-install, or release failure
+after creation can leave a partially configured target. Inspect the error and
+repair it manually, or deliberately remove the target before retrying. The action
+never deletes a repository or overwrites an existing one automatically.
 
 ## Local checks
 
-From this directory, run the Bats tests (if Bats is installed), shell syntax
-checks, and dry-run rendering:
+Install Bats, ShellCheck, and actionlint; install Python 3 with PyYAML for the
+composite integration test. No live GitHub repository is created by the tests:
+they use local Git repositories and a CLI stub at the GitHub boundary.
 
 ```sh
 bats tests
+shellcheck scripts/*.sh
 for script in scripts/*.sh; do sh -n "$script"; done
-scripts/install-sync-workflow.sh --dry-run /tmp/target https://github.com/example/upstream.git '0 4 * * *' ff-only main main
+actionlint examples/refork-example.yml
+sh scripts/install-sync-workflow.sh --dry-run /tmp/target example/upstream '17 4 * * *' merge main main
 ```
 
-The dry-run output should contain no `__UPSTREAM_URL__`, `__CRON__`,
-`__STRATEGY__`, `__UPSTREAM_BRANCH__`, or `__TARGET_BRANCH__` placeholders.
+Each script supports `--help`. Rendering validates branch refs, cron ranges, and
+single-line values, escapes YAML quotes, and rejects embedded GitHub expressions.
+Dry-run provisioning/release plans never include the token value.
