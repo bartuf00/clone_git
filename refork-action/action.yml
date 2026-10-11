@@ -1,0 +1,84 @@
+name: Refork upstream repository
+description: Create a standalone repository from an upstream mirror and configure synchronization.
+author: Reunion contributors
+branding:
+  icon: git-branch
+  color: blue
+inputs:
+  source_repo_url:
+    description: HTTPS or SSH URL of the upstream repository to mirror.
+    required: true
+    default: ''
+  target_repo:
+    description: Target repository name, including the owner (for example, owner/project).
+    required: true
+    default: ''
+  visibility:
+    description: Visibility of the created target repository.
+    required: false
+    default: private
+  sync_cron:
+    description: Five-field cron expression for the upstream synchronization workflow.
+    required: false
+    default: '0 4 * * *'
+  sync_strategy:
+    description: Git strategy used when synchronizing the target branch with upstream.
+    required: false
+    default: ff-only
+  upstream_branch:
+    description: Branch to synchronize from the upstream repository.
+    required: false
+    default: main
+  target_branch:
+    description: Branch to synchronize in the target repository.
+    required: false
+    default: main
+  release_tag:
+    description: Optional tag to create and publish as a release after provisioning.
+    required: false
+    default: ''
+  release_asset_path:
+    description: Optional local path to an asset to attach to the release.
+    required: false
+    default: ''
+  token:
+    description: Personal access token with repository and workflow-file permissions.
+    required: true
+    default: ''
+outputs:
+  target_repo_url:
+    description: URL of the created standalone target repository.
+    value: ${{ steps.create-mirror.outputs.target_repo_url }}
+  sync_workflow_path:
+    description: Path of the generated upstream synchronization workflow.
+    value: ${{ steps.install-workflow.outputs.sync_workflow_path }}
+runs:
+  using: composite
+  steps:
+    - id: create-mirror
+      name: Create standalone repository
+      shell: bash
+      env:
+        SOURCE_REPO_URL: ${{ inputs.source_repo_url }}
+        TARGET_REPO: ${{ inputs.target_repo }}
+        VISIBILITY: ${{ inputs.visibility }}
+        PAT_TOKEN: ${{ inputs.token }}
+      run: |
+        ${{ github.action_path }}/scripts/create-mirror.sh "${SOURCE_REPO_URL}" "${TARGET_REPO}"
+        echo "target_repo_url=https://github.com/${TARGET_REPO}" >> "$GITHUB_OUTPUT"
+    - id: install-workflow
+      name: Generate synchronization workflow
+      shell: bash
+      env:
+        UPSTREAM_URL: ${{ inputs.source_repo_url }}
+        UPSTREAM_BRANCH: ${{ inputs.upstream_branch }}
+        TARGET_BRANCH: ${{ inputs.target_branch }}
+      run: |
+        ${{ github.action_path }}/scripts/install-sync-workflow.sh "${GITHUB_WORKSPACE}" "${UPSTREAM_URL}" "${{ inputs.sync_cron }}" "${{ inputs.sync_strategy }}" "${UPSTREAM_BRANCH}" "${TARGET_BRANCH}"
+        echo "sync_workflow_path=${GITHUB_WORKSPACE}/.github/workflows/upstream-sync.yml" >> "$GITHUB_OUTPUT"
+    - name: Publish release
+      if: inputs.release_tag != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+      run: ${{ github.action_path }}/scripts/release-asset.sh "${{ inputs.release_tag }}" "${{ inputs.release_asset_path }}"

@@ -1,0 +1,27 @@
+name: Create standalone refork
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  workflows: write
+
+jobs:
+  refork:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create and configure standalone repository
+        id: refork
+        uses: ./refork-action
+        with:
+          source_repo_url: https://github.com/example/upstream.git
+          target_repo: example/standalone-project
+          visibility: private
+          sync_cron: '0 4 * * *'
+          sync_strategy: ff-only
+          upstream_branch: main
+          target_branch: main
+          release_tag: ''
+          release_asset_path: ''
+          token: ${{ secrets.PAT_TOKEN }}

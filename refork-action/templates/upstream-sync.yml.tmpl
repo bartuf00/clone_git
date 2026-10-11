@@ -1,0 +1,62 @@
+name: Sync upstream repository
+
+on:
+  schedule:
+    - cron: '__CRON__'
+  workflow_dispatch:
+    inputs:
+      sync_strategy:
+        description: Git strategy to use for the synchronization.
+        required: false
+        default: __STRATEGY__
+        type: choice
+        options:
+          - ff-only
+          - merge
+          - rebase
+
+permissions:
+  contents: write
+
+env:
+  UPSTREAM_URL: '__UPSTREAM_URL__'
+  UPSTREAM_BRANCH: '__UPSTREAM_BRANCH__'
+  TARGET_BRANCH: '__TARGET_BRANCH__'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out target repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Synchronize with upstream
+        env:
+          SYNC_STRATEGY: ${{ github.event.inputs.sync_strategy || '__STRATEGY__' }}
+        run: |
+          set -euo pipefail
+          git config user.name "refork-sync[bot]"
+          git config user.email "refork-sync[bot]@users.noreply.github.com"
+          git remote add upstream "$UPSTREAM_URL"
+          git fetch upstream "$UPSTREAM_BRANCH"
+          git checkout "$TARGET_BRANCH"
+          case "$SYNC_STRATEGY" in
+            ff-only)
+              git merge --ff-only "upstream/$UPSTREAM_BRANCH"
+              ;;
+            merge)
+              git merge --no-edit "upstream/$UPSTREAM_BRANCH"
+              ;;
+            rebase)
+              git rebase "upstream/$UPSTREAM_BRANCH"
+              ;;
+            *)
+              printf 'Unsupported sync strategy: %s\n' "$SYNC_STRATEGY" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Push synchronized branch
+        run: git push origin "HEAD:$TARGET_BRANCH"
