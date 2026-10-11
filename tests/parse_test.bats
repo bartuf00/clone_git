@@ -18,11 +18,27 @@ teardown() {
   [[ "$output" == *"git clone --bare https://github.com/upstream/project.git"* ]]
 }
 
-@test "passes through the short owner/repo source form" {
+@test "normalizes the short owner/repo source form to HTTPS" {
   run "$SCRIPT" --dry-run upstream/project "target/mirror"
 
   [ "$status" -eq 0 ]
-  [[ "$output" == *"git clone --bare upstream/project"* ]]
+  [[ "$output" == *"git clone --bare https://github.com/upstream/project.git"* ]]
+}
+
+@test "rejects malformed source and target repository names" {
+  for repo in 'a/b/c' 'a//b' '/b' 'a/' '-a/b' 'a/b?x' 'a/b c'; do
+    run "$SCRIPT" --dry-run "$repo" target/mirror
+    [ "$status" -ne 0 ]
+    run "$SCRIPT" --dry-run upstream/project "$repo"
+    [ "$status" -ne 0 ]
+  done
+}
+
+@test "accepts the documented GitHub SSH URL form" {
+  run "$SCRIPT" --dry-run git@github.com:upstream/project.git target/mirror
+
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"git clone --bare https://github.com/upstream/project.git"* ]]
 }
 
 @test "rejects an invalid source URL" {
