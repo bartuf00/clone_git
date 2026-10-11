@@ -6,7 +6,7 @@ branding:
   color: blue
 inputs:
   source_repo_url:
-    description: HTTPS or SSH URL of the upstream repository to mirror.
+    description: GitHub HTTPS/SSH URL or owner/repo to mirror (SSH forms use HTTPS with the PAT).
     required: true
     default: ''
   target_repo:
@@ -22,15 +22,15 @@ inputs:
     required: false
     default: '0 4 * * *'
   sync_strategy:
-    description: Git strategy used when synchronizing the target branch with upstream.
+    description: Sync strategy (merge preserves installed files; ff-only rejects divergence; rebase rewrites with a lease).
     required: false
-    default: ff-only
+    default: merge
   upstream_branch:
     description: Branch to synchronize from the upstream repository.
     required: false
     default: main
   target_branch:
-    description: Branch to synchronize in the target repository.
+    description: Target branch to synchronize and set as the new repository default branch.
     required: false
     default: main
   release_tag:
@@ -38,11 +38,11 @@ inputs:
     required: false
     default: ''
   release_asset_path:
-    description: Optional local path to an asset to attach to the release.
+    description: Optional asset file in the caller workspace (checkout/build it before this action).
     required: false
     default: ''
   token:
-    description: Personal access token with repository and workflow-file permissions.
+    description: Classic PAT with repo (or public_repo for public only) and workflow scopes.
     required: true
     default: ''
 outputs:
@@ -50,7 +50,7 @@ outputs:
     description: URL of the created standalone target repository.
     value: ${{ steps.create-mirror.outputs.target_repo_url }}
   sync_workflow_path:
-    description: Path of the generated upstream synchronization workflow.
+    description: Repository-relative path of the workflow committed to the target.
     value: ${{ steps.install-workflow.outputs.sync_workflow_path }}
 runs:
   using: composite
@@ -59,26 +59,54 @@ runs:
       name: Create standalone repository
       shell: bash
       env:
+        ACTION_PATH: ${{ github.action_path }}
         SOURCE_REPO_URL: ${{ inputs.source_repo_url }}
         TARGET_REPO: ${{ inputs.target_repo }}
         VISIBILITY: ${{ inputs.visibility }}
         PAT_TOKEN: ${{ inputs.token }}
-      run: |
-        ${{ github.action_path }}/scripts/create-mirror.sh "${SOURCE_REPO_URL}" "${TARGET_REPO}"
-        echo "target_repo_url=https://github.com/${TARGET_REPO}" >> "$GITHUB_OUTPUT"
-    - id: install-workflow
-      name: Generate synchronization workflow
-      shell: bash
-      env:
-        UPSTREAM_URL: ${{ inputs.source_repo_url }}
+        SYNC_CRON: ${{ inputs.sync_cron }}
+        SYNC_STRATEGY: ${{ inputs.sync_strategy }}
         UPSTREAM_BRANCH: ${{ inputs.upstream_branch }}
         TARGET_BRANCH: ${{ inputs.target_branch }}
       run: |
-        ${{ github.action_path }}/scripts/install-sync-workflow.sh "${GITHUB_WORKSPACE}" "${UPSTREAM_URL}" "${{ inputs.sync_cron }}" "${{ inputs.sync_strategy }}" "${UPSTREAM_BRANCH}" "${TARGET_BRANCH}"
-        echo "sync_workflow_path=${GITHUB_WORKSPACE}/.github/workflows/upstream-sync.yml" >> "$GITHUB_OUTPUT"
+        sh "$ACTION_PATH/scripts/install-sync-workflow.sh" --dry-run "$RUNNER_TEMP" "$SOURCE_REPO_URL" "$SYNC_CRON" "$SYNC_STRATEGY" "$UPSTREAM_BRANCH" "$TARGET_BRANCH" >/dev/null
+        sh "$ACTION_PATH/scripts/create-mirror.sh" "$SOURCE_REPO_URL" "$TARGET_REPO"
+        echo "target_repo_url=https://github.com/${TARGET_REPO}" >> "$GITHUB_OUTPUT"
+    - id: install-workflow
+      name: Install and push synchronization workflow to target
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+        UPSTREAM_URL: ${{ inputs.source_repo_url }}
+        UPSTREAM_BRANCH: ${{ inputs.upstream_branch }}
+        TARGET_BRANCH: ${{ inputs.target_branch }}
+        TARGET_REPO: ${{ inputs.target_repo }}
+        SYNC_CRON: ${{ inputs.sync_cron }}
+        SYNC_STRATEGY: ${{ inputs.sync_strategy }}
+        GH_TOKEN: ${{ inputs.token }}
+        GIT_TERMINAL_PROMPT: '0'
+        GIT_CONFIG_COUNT: '2'
+        GIT_CONFIG_KEY_0: credential.https://github.com.helper
+        GIT_CONFIG_VALUE_0: ''
+        GIT_CONFIG_KEY_1: credential.https://github.com.helper
+        GIT_CONFIG_VALUE_1: '!gh auth git-credential'
+      run: |
+        target_dir=$(mktemp -d "$RUNNER_TEMP/refork-target.XXXXXX")
+        trap 'rm -rf "$target_dir"' EXIT
+        git clone --branch "$TARGET_BRANCH" --single-branch "https://github.com/$TARGET_REPO.git" "$target_dir"
+        sh "$ACTION_PATH/scripts/install-sync-workflow.sh" "$target_dir" "$UPSTREAM_URL" "$SYNC_CRON" "$SYNC_STRATEGY" "$UPSTREAM_BRANCH" "$TARGET_BRANCH"
+        git -C "$target_dir" add .github/workflows/upstream-sync.yml .github/refork/sync-upstream.sh
+        git -C "$target_dir" -c user.name='refork-sync[bot]' -c user.email='refork-sync[bot]@users.noreply.github.com' commit -m 'chore: install upstream synchronization'
+        git -C "$target_dir" push origin "HEAD:refs/heads/$TARGET_BRANCH"
+        echo 'sync_workflow_path=.github/workflows/upstream-sync.yml' >> "$GITHUB_OUTPUT"
     - name: Publish release
       if: inputs.release_tag != ''
       shell: bash
       env:
+        ACTION_PATH: ${{ github.action_path }}
         GH_TOKEN: ${{ inputs.token }}
-      run: ${{ github.action_path }}/scripts/release-asset.sh "${{ inputs.release_tag }}" "${{ inputs.release_asset_path }}"
+        GH_REPO: ${{ inputs.target_repo }}
+        TARGET_BRANCH: ${{ inputs.target_branch }}
+        RELEASE_TAG: ${{ inputs.release_tag }}
+        RELEASE_ASSET_PATH: ${{ inputs.release_asset_path }}
+      run: sh "$ACTION_PATH/scripts/release-asset.sh" "$RELEASE_TAG" "$RELEASE_ASSET_PATH"
