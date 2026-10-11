@@ -13,7 +13,7 @@ jobs:
     steps:
       - name: Create and configure standalone repository
         id: refork
-        uses: ./refork-action
+        uses: bartuf00/clone_git@v1
         with:
           source_repo_url: https://github.com/example/upstream.git
           target_repo: example/standalone-project
