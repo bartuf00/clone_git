@@ -1,0 +1,76 @@
+name: Create standalone refork
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_repo_url:
+        description: 'Upstream to mirror (owner/repo or https://github.com/owner/repo.git)'
+        required: true
+        type: string
+      target_repo:
+        description: 'New repo as owner/name. Must differ from the source (use another owner or a -mirror name).'
+        required: true
+        type: string
+      visibility:
+        description: 'Visibility of the created repository'
+        type: choice
+        options:
+          - private
+          - public
+        default: private
+      sync_cron:
+        description: 'Five-field UTC cron for the scheduled sync'
+        required: true
+        type: string
+        default: '0 4 * * *'
+      sync_strategy:
+        description: 'How upstream changes are merged into the target'
+        type: choice
+        options:
+          - merge
+          - ff-only
+          - rebase
+        default: merge
+      upstream_branch:
+        description: 'Branch to synchronize from upstream'
+        required: true
+        type: string
+        default: main
+      target_branch:
+        description: 'Target branch and new default branch'
+        required: true
+        type: string
+        default: main
+      release_tag:
+        description: 'Optional tag to publish as a release in the target'
+        required: false
+        type: string
+        default: ''
+
+permissions: {}
+
+jobs:
+  refork:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out this action
+        uses: actions/checkout@v4
+
+      - name: Create and configure standalone repository
+        id: refork
+        uses: ./
+        with:
+          source_repo_url: ${{ inputs.source_repo_url }}
+          target_repo: ${{ inputs.target_repo }}
+          visibility: ${{ inputs.visibility }}
+          sync_cron: ${{ inputs.sync_cron }}
+          sync_strategy: ${{ inputs.sync_strategy }}
+          upstream_branch: ${{ inputs.upstream_branch }}
+          target_branch: ${{ inputs.target_branch }}
+          release_tag: ${{ inputs.release_tag }}
+          token: ${{ secrets.PAT_TOKEN }}
+
+      - name: Provisioned
+        run: |
+          echo "target_repo_url=${{ steps.refork.outputs.target_repo_url }}"
+          echo "sync_workflow_path=${{ steps.refork.outputs.sync_workflow_path }}"
