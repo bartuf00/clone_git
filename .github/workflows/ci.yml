@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bats shellcheck git-lfs
+
+      - name: Install actionlint
+        run: |
+          mkdir -p "$HOME/bin"
+          curl -fsSL -o "$RUNNER_TEMP/download-actionlint.bash" \
+            https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash
+          bash "$RUNNER_TEMP/download-actionlint.bash" "1.7.12" "$HOME/bin"
+          echo "$HOME/bin" >> "$GITHUB_PATH"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Python dependencies
+        run: python3 -m pip install --upgrade pytest pyyaml
+
+      - name: Bats tests
+        run: bats tests
+
+      - name: Pytest
+        run: python3 -m pytest tests -q
+
+      - name: ShellCheck
+        run: shellcheck --severity=warning scripts/*.sh
+
+      - name: POSIX syntax check
+        run: for script in scripts/*.sh; do sh -n "$script"; done
+
+      - name: Lint example workflow
+        run: actionlint examples/refork-example.yml
+
+      - name: Lint CI workflow
+        run: actionlint .github/workflows/ci.yml
+
+      - name: Lint rendered sync template
+        run: sh scripts/install-sync-workflow.sh --dry-run /tmp/refork-target example/upstream '17 4 * * *' merge main main | actionlint -
